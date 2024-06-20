@@ -5,6 +5,8 @@ import torch.nn.functional as F
 
 from fla.ops.gla.recurrent_fuse import fused_recurrent_gla
 
+import pdb
+
 
 def ceildiv(a, b):
     return -(a // -b)
@@ -32,13 +34,32 @@ def naive_recurrent_gla(
 
     for i in range(seq_len):
         q_i = q[:, :, i, :] * scale
-        k_i = k[:, :, i]
-        v_i = v[:, :, i, :]
-        gk_i = gk[:, :, i].exp()
-        kv_i = k_i[..., None] * v_i[..., None, :]
+        k_i = k[:, :, i]  # [4, 4, 128]
+        v_i = v[:, :, i, :]  # [4, 4, 128]
+        gk_i = gk[:, :, i, :].exp()  # [4, 4, 128]
+
+        # None 在这里类似于插入维度
+        # k_i[..., None] 会将 k_i 的最后一个维度扩展一维，
+        # 形状从 [4, 4, 128] 变为 [4, 4, 128, 1]
+
+        # v_i[..., None, :] 会将 v_i 的倒数第二个维度扩展一维，
+        # 形状从 [4, 4, 128] 变为 [4, 4, 1, 128]
+        # kv_i 的形状是 [4, 4, 128, 128]
+        kv_i = k_i[..., None] * v_i[..., None, :]  # 外积
+
+        # gk_i[..., None] 会将 gk_i 的最后一个维度扩展一维，
+        # 形状从 [4, 4, 128] 变为 [4, 4, 128, 1]
+        # 这里有一个broadcast加
+
+        # h 的形状是 [4, 4, 128, 128]
+        # gk_i[..., None] 的形状是 [4, 4, 128, 1]
         h = h * gk_i[..., None] + kv_i
+
+        # [4,4,128,1] * [4,4,128,128] = [4,4,128,128]
         o_i = (q_i[..., None] * h).sum(-2)
-        o[:, :, i] = o_i
+
+        # o_i 的形状是 [4, 4, 128]
+        o[:, :, i, :] = o_i
 
     if causal:
         return o.to(orig_dtype), h
